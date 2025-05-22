@@ -2,7 +2,7 @@ import math
 import os
 from random import randint
 from collections import deque
-import serial  # Add serial module
+import serial 
 
 import pygame
 from pygame.locals import *
@@ -12,13 +12,14 @@ FPS = 60
 ANIMATION_SPEED = 0.18 
 WIN_WIDTH = 284 * 2    
 WIN_HEIGHT = 512
+BACKGROUND_WIDTH = 1136  
 
 
 class Bird(pygame.sprite.Sprite):
    
     WIDTH = HEIGHT = 32
-    SINK_SPEED = 0.18
-    CLIMB_SPEED = 0.25
+    SINK_SPEED = 0.15
+    CLIMB_SPEED = 0.2
     CLIMB_DURATION = 333.3
 
     def __init__(self, x, y, msec_to_climb, images):
@@ -63,7 +64,7 @@ class Bird(pygame.sprite.Sprite):
 class PipePair(pygame.sprite.Sprite):
     WIDTH = 80
     PIECE_HEIGHT = 32
-    ADD_INTERVAL = 3000
+    ADD_INTERVAL = 1500  
 
     def __init__(self, pipe_end_img, pipe_body_img):
       
@@ -151,51 +152,21 @@ def msec_to_frames(milliseconds, fps=FPS):
     return fps * milliseconds / 1000.0
 
 
-def main():
-
-    pygame.init()
-
-    display_surface = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
-    pygame.display.set_caption('FRDM-KL46Z Flappy Harjot')
-
+def run_game(display_surface, ser, kl46z_connected):
+    """Run a single game session"""
     clock = pygame.time.Clock()
-    score_font = pygame.font.SysFont(None, 32, bold=True)  # default font
+    score_font = pygame.font.SysFont(None, 32, bold=True)
     images = load_images()
     bird = Bird(50, int(WIN_HEIGHT/2 - Bird.HEIGHT/2), 2,
                 (images['bird-wingup'], images['bird-wingdown']))
 
     pipes = deque()
-
-    # serial blah blah
-    try:
-        # TODO: me when ts will not be com5 universally i should probably fix
-        ser = serial.Serial('COM5', 115200, timeout=0.01)
-        print("Connected to FRDM-KL46Z")
-        kl46z_connected = True
-    except Exception as e:
-        print(f"Could not connect to FRDM-KL46Z: {e}")
-        print("Using keyboard controls only (Space, Up, Return)")
-        kl46z_connected = False
-        ser = None
-
     frame_clock = 0  
     score = 0
+    background_x = 0
     done = paused = False
 
-    display_surface.fill((0, 0, 0))
-    title_font = pygame.font.SysFont(None, 48, bold=True)
-    title = title_font.render('Flappy Bird - KL46Z Edition', True, (255, 255, 255))
-    instructions1 = score_font.render('Press SPACE to start', True, (255, 255, 255))
-    instructions2 = score_font.render('Use KL46Z SW1 button or SPACE to jump', True, (255, 255, 255))
-    status = score_font.render(f'KL46Z Status: {"Connected" if kl46z_connected else "Not Connected"}', True, 
-                              (0, 255, 0) if kl46z_connected else (255, 0, 0))
-    
-    display_surface.blit(title, (WIN_WIDTH/2 - title.get_width()/2, WIN_HEIGHT/3))
-    display_surface.blit(instructions1, (WIN_WIDTH/2 - instructions1.get_width()/2, WIN_HEIGHT/2))
-    display_surface.blit(instructions2, (WIN_WIDTH/2 - instructions2.get_width()/2, WIN_HEIGHT/2 + 40))
-    display_surface.blit(status, (WIN_WIDTH/2 - status.get_width()/2, WIN_HEIGHT/2 + 80))
-    pygame.display.flip()
-    
+   
    
     waiting = True
     while waiting:
@@ -205,8 +176,6 @@ def main():
                 return
             elif e.type == KEYUP and e.key in (K_RETURN, K_SPACE):
                 waiting = False
-        
-        # check for KL46Z button press to start
         if kl46z_connected:
             try:
                 line = ser.readline().decode('utf-8').strip()
@@ -217,7 +186,7 @@ def main():
         
         clock.tick(FPS)
     
-    # main
+    # main game loop
     while not done:
         clock.tick(FPS)
         #manually handling 
@@ -235,7 +204,6 @@ def main():
                     e.key in (K_UP, K_RETURN, K_SPACE)):
                 bird.msec_to_climb = Bird.CLIMB_DURATION
         
-        # Check for FRDM-KL46Z input
         if kl46z_connected:
             try:
                 line = ser.readline().decode('utf-8').strip()
@@ -246,13 +214,17 @@ def main():
 
         if paused:
             continue #me when if will crash dont
+        background_x -= ANIMATION_SPEED * frames_to_msec(1)
+        if background_x <= -BACKGROUND_WIDTH:
+            background_x = 0
 
         pipe_collision = any(p.collides_with(bird) for p in pipes)
         if pipe_collision or 0 >= bird.y or bird.y >= WIN_HEIGHT - Bird.HEIGHT:
             done = True
 
-        for x in (0, WIN_WIDTH / 2):
-            display_surface.blit(images['background'], (x, 0))
+        display_surface.blit(images['background'], (background_x, 0))
+        # all this code for wide image
+        display_surface.blit(images['background'], (background_x + BACKGROUND_WIDTH, 0))
 
         while pipes and not pipes[0].visible:
             pipes.popleft()
@@ -263,8 +235,6 @@ def main():
 
         bird.update()
         display_surface.blit(bird.image, bird.rect)
-
-        # update and display score
         for p in pipes:
             if p.x + PipePair.WIDTH < bird.x and not p.score_counted:
                 score += 1
@@ -277,48 +247,237 @@ def main():
         pygame.display.flip()
         frame_clock += 1
     
-    # least hardcoded grace code
-    display_surface.fill((0, 0, 0))
-    game_over_font = pygame.font.SysFont(None, 48, bold=True)
-    game_over = game_over_font.render('Game Over', True, (255, 0, 0))
-    final_score = score_font.render(f'Final Score: {score}', True, (255, 255, 255))
-    restart_instructions = score_font.render('Press SPACE to play again', True, (255, 255, 255))
-    quit_instructions = score_font.render('Press ESC to quit', True, (255, 255, 255))
+    return score
+
+
+def get_serial_port_input(display_surface):
+    #get serial port from game window
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont(None, 24)
+    title_font = pygame.font.SysFont(None, 32, bold=True)
     
-    display_surface.blit(game_over, (WIN_WIDTH/2 - game_over.get_width()/2, WIN_HEIGHT/3))
-    display_surface.blit(final_score, (WIN_WIDTH/2 - final_score.get_width()/2, WIN_HEIGHT/2))
-    display_surface.blit(restart_instructions, (WIN_WIDTH/2 - restart_instructions.get_width()/2, WIN_HEIGHT/2 + 40))
-    display_surface.blit(quit_instructions, (WIN_WIDTH/2 - quit_instructions.get_width()/2, WIN_HEIGHT/2 + 80))
-    pygame.display.flip()
+    input_text = ""
+    cursor_visible = True
+    cursor_timer = 0
     
-    waiting = True
-    while waiting:
-        for e in pygame.event.get():
-            if e.type == QUIT or (e.type == KEYUP and e.key == K_ESCAPE):
-                waiting = False
+    while True:
+        cursor_timer += clock.get_time()
+        if cursor_timer >= 500:  
+            cursor_visible = not cursor_visible
+            cursor_timer = 0
+        
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                exit()
+            elif event.type == KEYDOWN:
+                if event.key == K_RETURN:
+                    return input_text.strip()
+                elif event.key == K_ESCAPE:
+                    return ""  
+                elif event.key == K_BACKSPACE:
+                    input_text = input_text[:-1]
+                else:
+                    if event.unicode.isprintable():
+                        input_text += event.unicode
+        
+        display_surface.fill((0, 0, 0))
+        
+        # title
+        title = title_font.render('FRDM-KL46Z (bad board) Serial Port Setup', True, (255, 255, 255))
+        display_surface.blit(title, (WIN_WIDTH//2 - title.get_width()//2, 50))
+        
+        #  very reliable
+        instructions = [
+            "Enter your FRDM-KL46Z serial port:",
+            "",
+            "Windows examples:",
+            "  COM3, COM4, COM5, COM6, etc.",
+            "  (Check Device Manager > Ports)",
+            "",
+            "Linux examples (you know this already):",
+            "  /dev/ttyACM0, /dev/ttyACM1, etc.",
+            "  (Check: ls /dev/tty* | grep ACM)",
+            "",
+            "Press ENTER to connect",
+         
+        ]
+        
+        y_offset = 100
+        for line in instructions:
+            text = font.render(line, True, (200, 200, 200))
+            display_surface.blit(text, (WIN_WIDTH//2 - text.get_width()//2, y_offset))
+            y_offset += 25
+    
+        input_box_y = y_offset + 20
+        input_box = pygame.Rect(WIN_WIDTH//2 - 150, input_box_y, 300, 30)
+        pygame.draw.rect(display_surface, (50, 50, 50), input_box)
+        pygame.draw.rect(display_surface, (100, 100, 100), input_box, 2)
+
+        text_surface = font.render(input_text, True, (255, 255, 255))
+        display_surface.blit(text_surface, (input_box.x + 5, input_box.y + 5))
+    
+        if cursor_visible:
+            cursor_x = input_box.x + 5 + text_surface.get_width()
+            cursor_y = input_box.y + 5
+            pygame.draw.line(display_surface, (255, 255, 255), 
+                           (cursor_x, cursor_y), (cursor_x, cursor_y + 20), 1)
+        
+        pygame.display.flip()
+        clock.tick(60)
+
+
+def main():
+    pygame.init()
+    display_surface = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
+    pygame.display.set_caption('FRDM-KL46Z Flappy Harjot')
+    while True:
+        port_input = get_serial_port_input(display_surface)
+        
+        if not port_input:
+            print("Skipping serial connection - using keyboard controls only")
+            kl46z_connected = False
+            ser = None
+            break
+        
+        port_input = port_input.strip()
+        
+        # for windows: handle numbers and add COM prefix if needed
+        if port_input.isdigit():
+            port_input = f"COM{port_input}"
+        elif port_input.lower().startswith('com') and not port_input.upper().startswith('COM'):
+            port_input = port_input.upper()
+        elif not port_input.startswith(('/dev/', 'COM')):
+            # append "com" if bro just types in 5
+            if port_input.replace('com', '').replace('COM', '').isdigit():
+                port_input = f"COM{port_input.replace('com', '').replace('COM', '')}"
+        
+        try:
+            ser = serial.Serial(port_input, 115200, timeout=0.01)
+            print(f"Successfully connected to {port_input}!")
+            kl46z_connected = True
+            break
+        except Exception as e:
+            print(f"Failed to connect to {port_input}: {e}")
+            
+            display_surface.fill((0, 0, 0))
+            error_font = pygame.font.SysFont(None, 28, bold=True)
+            regular_font = pygame.font.SysFont(None, 24)
+            
+            error_title = error_font.render('Connection Failed', True, (255, 0, 0))
+            error_msg = regular_font.render(f'Could not connect to {port_input}', True, (255, 255, 255))
+            error_detail = regular_font.render(str(e), True, (200, 200, 200))
+            retry_msg = regular_font.render('Press SPACE to try again, ESC to skip', True, (255, 255, 0))
+            
+            display_surface.blit(error_title, (WIN_WIDTH//2 - error_title.get_width()//2, WIN_HEIGHT//2 - 60))
+            display_surface.blit(error_msg, (WIN_WIDTH//2 - error_msg.get_width()//2, WIN_HEIGHT//2 - 20))
+            display_surface.blit(error_detail, (WIN_WIDTH//2 - error_detail.get_width()//2, WIN_HEIGHT//2 + 10))
+            display_surface.blit(retry_msg, (WIN_WIDTH//2 - retry_msg.get_width()//2, WIN_HEIGHT//2 + 50))
+            
+            pygame.display.flip()
+            
+            waiting = True
+            while waiting:
+                for event in pygame.event.get():
+                    if event.type == QUIT:
+                        pygame.quit()
+                        exit()
+                    elif event.type == KEYDOWN:
+                        if event.key == K_SPACE:
+                            waiting = False  
+                        elif event.key == K_ESCAPE:
+                            print("Using keyboard controls only")
+                            kl46z_connected = False
+                            ser = None
+                            waiting = False
+                            break
+                
+                if not kl46z_connected:
+                    break
+            
+            if not kl46z_connected:
                 break
-            elif e.type == KEYUP and e.key in (K_RETURN, K_SPACE):
-                waiting = False
-                main()  # Restart the game
+
+    clock = pygame.time.Clock()
+    score_font = pygame.font.SysFont(None, 32, bold=True)
+
+    while True:
+        display_surface.fill((0, 0, 0))
+        title_font = pygame.font.SysFont(None, 48, bold=True)
+        title = title_font.render('Congrats Harjot!', True, (255, 255, 255))
+        instructions1 = score_font.render('Press SPACE to start', True, (255, 255, 255))
+        instructions2 = score_font.render('Use KL46Z SW1 button or SPACE to jump', True, (255, 255, 255))
+        status = score_font.render(f'KL46Z Status: {"Connected" if kl46z_connected else "Not Connected"}', True, 
+                                  (0, 255, 0) if kl46z_connected else (255, 0, 0))
         
-        # ts shi dont reconnect rn
-        if kl46z_connected:
-            try:
-                line = ser.readline().decode('utf-8').strip()
-                if line == "JUMP":
+        display_surface.blit(title, (WIN_WIDTH/2 - title.get_width()/2, WIN_HEIGHT/3))
+        display_surface.blit(instructions1, (WIN_WIDTH/2 - instructions1.get_width()/2, WIN_HEIGHT/2))
+        display_surface.blit(instructions2, (WIN_WIDTH/2 - instructions2.get_width()/2, WIN_HEIGHT/2 + 40))
+        display_surface.blit(status, (WIN_WIDTH/2 - status.get_width()/2, WIN_HEIGHT/2 + 80))
+        pygame.display.flip()
+        
+
+        waiting = True
+        while waiting:
+            for e in pygame.event.get():
+                if e.type == QUIT or (e.type == KEYUP and e.key == K_ESCAPE):
+                    if ser:
+                        ser.close()
+                    pygame.quit()
+                    return
+                elif e.type == KEYUP and e.key in (K_RETURN, K_SPACE):
                     waiting = False
-                    main()  #restart
-            except Exception as e:
-                pass
+            
+           
+            if kl46z_connected:
+                try:
+                    line = ser.readline().decode('utf-8').strip()
+                    if line == "JUMP":
+                        waiting = False
+                except Exception as e:
+                    pass
+            
+            clock.tick(FPS)
         
-        clock.tick(FPS)
-    
-    # claen up 
-    if ser:
-        ser.close()
-    
-    print('Game over! Score: %i' % score)
-    pygame.quit()
+  
+        score = run_game(display_surface, ser, kl46z_connected)
+        
+   
+        display_surface.fill((0, 0, 0))
+        game_over_font = pygame.font.SysFont(None, 48, bold=True)
+        game_over = game_over_font.render('Game Over', True, (255, 0, 0))
+        final_score = score_font.render(f'Final Score: {score}', True, (255, 255, 255))
+        restart_instructions = score_font.render('Press SPACE to play again', True, (255, 255, 255))
+        quit_instructions = score_font.render('Press ESC to quit', True, (255, 255, 255))
+        
+        display_surface.blit(game_over, (WIN_WIDTH/2 - game_over.get_width()/2, WIN_HEIGHT/3))
+        display_surface.blit(final_score, (WIN_WIDTH/2 - final_score.get_width()/2, WIN_HEIGHT/2))
+        display_surface.blit(restart_instructions, (WIN_WIDTH/2 - restart_instructions.get_width()/2, WIN_HEIGHT/2 + 40))
+        display_surface.blit(quit_instructions, (WIN_WIDTH/2 - quit_instructions.get_width()/2, WIN_HEIGHT/2 + 80))
+        pygame.display.flip()
+        
+   
+        waiting = True
+        while waiting:
+            for e in pygame.event.get():
+                if e.type == QUIT or (e.type == KEYUP and e.key == K_ESCAPE):
+                    if ser:
+                        ser.close()
+                    print('Game over! Score: %i' % score)
+                    pygame.quit()
+                    return
+                elif e.type == KEYUP and e.key in (K_RETURN, K_SPACE):
+                    waiting = False 
+        
+            if kl46z_connected:
+                try:
+                    line = ser.readline().decode('utf-8').strip()
+                    if line == "JUMP":
+                        waiting = False  
+                except Exception as e:
+                    pass
+            
+            clock.tick(FPS)
 
 
 if __name__ == '__main__':
