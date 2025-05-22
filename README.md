@@ -1,4 +1,6 @@
-## Most accessible game 
+## Congrats on graduating undergrad!!! 
+
+Best, most accessible game
 
 Step 1: Download main.c, download MCUExpresso to set up the FRDM 
 
