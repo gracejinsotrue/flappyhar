@@ -139,8 +139,8 @@ def load_images():
     return {'background': load_image('background.png'),
             'pipe-end': load_image('pipe_end.png'),
             'pipe-body': load_image('pipe_body.png'),
-            'bird-wingup': load_image('bird_wing_up.png'),
-            'bird-wingdown': load_image('bird_wing_down.png')}
+            'bird-wingup': load_image('har_wing_up.png'),
+            'bird-wingdown': load_image('har_wing_down.png')}
 
 
 def frames_to_msec(frames, fps=FPS):
